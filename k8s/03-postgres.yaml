@@ -1,0 +1,79 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: ticketing
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+  namespace: ticketing
+data:
+  init.sql: |
+    CREATE TABLE IF NOT EXISTS ticket_orders (
+        id SERIAL PRIMARY KEY,
+        order_id TEXT UNIQUE NOT NULL,
+        event_id TEXT NOT NULL,
+        customer_email TEXT NOT NULL,
+        quantity INTEGER NOT NULL CHECK (quantity > 0),
+        status TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_ticket_orders_created_at ON ticket_orders (created_at DESC);
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: ticketing
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {app: postgres}
+  template:
+    metadata:
+      labels: {app: postgres}
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports: [{containerPort: 5432}]
+          envFrom:
+            - configMapRef: {name: ticketing-config}
+            - secretRef: {name: ticketing-secret}
+          volumeMounts:
+            - {name: pgdata, mountPath: /var/lib/postgresql/data, subPath: pgdata}
+            - {name: init-script, mountPath: /docker-entrypoint-initdb.d}
+          resources:
+            requests: {cpu: "100m", memory: "128Mi"}
+            limits: {cpu: "500m", memory: "512Mi"}
+          readinessProbe:
+            exec: {command: ["pg_isready", "-U", "ticketing_user", "-d", "ticketing"]}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec: {command: ["pg_isready", "-U", "ticketing_user", "-d", "ticketing"]}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+      volumes:
+        - name: pgdata
+          persistentVolumeClaim: {claimName: postgres-pvc}
+        - name: init-script
+          configMap: {name: postgres-init}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: ticketing
+spec:
+  selector: {app: postgres}
+  ports: [{port: 5432, targetPort: 5432}]

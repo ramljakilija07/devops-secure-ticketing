@@ -1,0 +1,11 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: api
+  namespace: ticketing
+spec:
+  to:
+    kind: Service
+    name: api
+  port:
+    targetPort: 8080
